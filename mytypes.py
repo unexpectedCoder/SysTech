@@ -30,9 +30,7 @@ class Tank:
             'n' + self.var: self.n,
             'Ex' + self.var: 1 / self.Ex
         }
-        tank = Tank(data, self.var)
-        tank.Vi, tank.V = self.Vi.copy(), self.V.copy()
-        return tank
+        return Tank(data, self.var)
 
     def starting_update(self, x: float, atarg: float, btarg: float, coeff: float):
         self.Vi.append(laplace(x, self.Ex, atarg, btarg) / self.omega)
@@ -53,15 +51,17 @@ class SPAM:
         self.n = data['n' + variant]
         self.t_shot = 60 / self.n if self.n is not None else None
         self.Ex = 1 / data['Ex' + variant]
+        self.cost = data['C' + variant]
 
     def __str__(self):
         return f"SPAM (var. {self.var}):" \
                f"\n - v = {self.v} [m/s]" \
-               f"\n - a x b = {self.a} x {self.b} m" \
+               f"\n - a x b = {self.a} x {self.b} [m]" \
                f"\n - omega = {self.omega}" \
                f"\n - n = {self.n} [1/min]" \
                f"\n - Ex/x = 1 / {1 / self.Ex}" \
-               f"\n - shot time = {self.t_shot} [s]"
+               f"\n - shot time = {self.t_shot} [s]" \
+               f"\n - cost = {self.cost}"
 
     def __copy__(self):
         data = {
@@ -69,11 +69,10 @@ class SPAM:
             'b': self.b,
             'omega' + self.var: self.omega,
             'n' + self.var: self.n,
-            'Ex' + self.var: 1 / self.Ex
+            'Ex' + self.var: 1 / self.Ex,
+            'C' + self.var: self.cost
         }
-        spam = SPAM(data, self.var)
-        spam.Wi, spam.W = self.Wi.copy(), self.W.copy()
-        return spam
+        return SPAM(data, self.var)
 
     def set_variant(self, data: dict, variant: str):
         self.var = variant
@@ -81,6 +80,7 @@ class SPAM:
         self.n = data['n' + variant]
         self.t_shot = 60 / self.n if self.n is not None else None
         self.Ex = 1 / data['Ex' + variant]
+        self.cost = data['C' + variant]
 
     def starting_update(self, x: float, atarg: float, btarg: float, coeff: float):
         self.Wi.append(laplace(x, self.Ex, atarg, btarg) / self.omega)
@@ -89,3 +89,6 @@ class SPAM:
     def update(self, x: float, atarg: float, btarg: float, coeff: float):
         self.Wi.append(laplace(x, self.Ex, atarg, btarg) / self.omega)
         self.W.append(self.W[-1] + coeff * self.Wi[-1])
+
+    def get_efficiency(self) -> float:
+        return len(self.W) * self.cost / self.W[-1]

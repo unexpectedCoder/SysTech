@@ -3,8 +3,8 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 
-def show_laplace(calc_laplace: Callable, data: dict):
-    x = np.linspace(100, data['x0'], 100)
+def show_laplace(calc_laplace: Callable, data: dict, dist_min: float = 200.):
+    x = np.linspace(dist_min, data['x0'], 100)
     phi_t = np.array([calc_laplace(dist, 1 / data['Ex100t'], data['a'], data['b']) for dist in x]) / data['omega100t']
     phi_100 = np.array([calc_laplace(dist, 1 / data['Ex100'], data['at'], data['bt']) for dist in x]) / data['omega100']
     phi_152 = np.array([calc_laplace(dist, 1 / data['Ex152'], data['at'], data['bt']) for dist in x]) / data['omega152']

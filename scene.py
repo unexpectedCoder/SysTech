@@ -15,6 +15,7 @@ class Scene:
         self.events = None
         self.v = None
         self.tank, self.spam = None, None
+        self.t_tank, self.t_spam = None, None
 
     def __str__(self):
         return f"Scene:" \
@@ -23,15 +24,21 @@ class Scene:
                f"\n - {self.spam}" \
                f"\n - {self.tank}"
 
-    def start(self, spam: tp.SPAM, tank: tp.Tank, acc: int = 3, out: bool = False) -> tuple:
+    def get_spam_efficiency(self) -> float:
+        return self.spam.get_efficiency()
+
+    def start(self, spam: tp.SPAM, tank: tp.Tank, acc: int = 3,
+              out: bool = False, ptur_num: int = 3) -> tuple:
+        self.time, self.x = None, None
+        self.t_tank, self.t_spam = None, None
+        self.events = None
         self.spam, self.tank = copy(spam), copy(tank)
         self.v = abs(self.spam.v - self.tank.v)
 
         if self.spam.var == 'ptur':
-            tf, xf = self.__calc_guided()
+            self.t_spam, self.t_tank, self.events = self.__calc_guided(num=ptur_num, acc=acc)
         else:
-            self.events, self.time, self.x = self.get_sequence_unguided()
-            tf, xf = self.__calc_unguided(acc=acc)
+            self.__calc_unguided(acc=acc)
 
         if out:
             print("Sequencing results:")
@@ -45,77 +52,74 @@ class Scene:
             for i, (x1, x2) in enumerate(zip(self.x[::2], self.x[1::2])):
                 print(f"\t{i + 1}.\t({round(x1, acc)}, {round(x2, acc)})")
 
-        return tf, xf, self.spam.W, self.tank.V
+        if self.spam.var == 'ptur':
+            x_spam = [hlp.get_dist(self.x0, -self.v, t) for t in self.t_spam]
+            x_tank = [hlp.get_dist(self.x0, -self.v, t) for t in self.t_tank]
 
-    def get_sequence_unguided(self) -> tuple:
-        t1, t2 = 0, self.t0
-        x1, x2 = self.x0, hlp.get_dist(self.x0, -self.v, self.t0)
+            return self.events, self.t_spam, self.t_tank, x_spam, x_tank, self.spam.W, self.tank.V
+        return self.events, self.time, self.x, self.spam.W, self.tank.V
 
-        indx = 0
-        events, time, dist = ['spam', 'tank'], [(t1, t2)], [(x1, x2)]
-        while min(x1, x2) > 100:
-            # SPAM (W)
-            t1 += self.spam.t_shot
-            x1 = hlp.get_dist(self.x0, -self.v, t1)
-            events.append('spam')
+    def __calc_unguided(self, acc: int = 3):
+        self.events, self.time, self.x = self.__get_sequence_unguided()
 
-            # Tank (V)
-            t2 += self.tank.t_shot
-            x2 = hlp.get_dist(self.x0, -self.v, t2)
-            events.append('tank')
-
-            time.append((t1, t2))
-            dist.append((x1, x2))
-
-            if x1 < x2:
-                events[-1], events[-2] = events[-2], events[-1]
-
-            indx += 2
-            if events[indx] == 'tank':
-                if x2 - x1 < self.v * self.spam.t_shot:
-                    time[-1] = time[-1][1], time[-1][0]
-                    dist[-1] = dist[-1][1], dist[-1][0]
-                else:
-                    events[-1], events[-2] = events[-2], events[-1]
-
-        time = nparray([subval for val in time for subval in val])
-        dist = nparray([subval for val in dist for subval in val])
-        return nparray(events), time, dist
-
-    def __calc_unguided(self, acc: int = 3) -> tuple:
         self.spam.starting_update(self.x[0], self.tank.a, self.tank.b, 1)
         self.tank.starting_update(self.x[1], self.spam.a, self.spam.b, self.__get_coeff())
 
-        tf, xf = None, None
         for event, t, x in zip(self.events, self.time, self.x):
             if round(self.spam.W[-1] + self.tank.V[-1], acc) == 1:
-                tf, xf = t, x
                 break
             if event == 'spam':
                 self.spam.update(x, self.tank.a, self.tank.b, self.__get_coeff())
             else:
                 self.tank.update(x, self.spam.a, self.spam.b, self.__get_coeff())
 
-        return tf, xf
+    def __get_sequence_unguided(self) -> tuple:
+        t1, t2 = 0, self.t0
+        x1, x2 = self.x0, hlp.get_dist(self.x0, -self.v, self.t0)
 
-    def __calc_guided(self) -> tuple:
-        t_tank = self.t0
+        events, time, dist = ['spam', 'tank'], [t1, t2], [x1, x2]
+        while min(x1, x2) > self.x0 / 10:
+            # SPAM (W)
+            t1 += self.spam.t_shot
+            x1 = hlp.get_dist(self.x0, -self.v, t1)
 
+            # Tank (V)
+            t2 += self.tank.t_shot
+            x2 = hlp.get_dist(self.x0, -self.v, t2)
+
+            if t1 > t2:
+                t1 -= self.spam.t_shot
+
+                events.append('tank')
+                time.append(t2)
+                dist.append(x2)
+                continue
+
+            events.extend(['spam', 'tank'])
+            time.extend([t1, t2])
+            dist.extend([x1, x2])
+
+        return nparray(events), nparray(time), nparray(dist)
+
+    def __calc_guided(self, num: int = 7, acc: int = 3) -> tuple:
         v_relative = self.data['vptur'] + self.data['vt']
-        x1 = self.x0
-        t1 = self.x0 / v_relative
-        n1 = int((t1 - self.t0) / self.tank.t_shot) + 1
+        x = self.x0
+        t = x / v_relative
+        time = t
 
-        x2 = hlp.get_dist(self.x0, -self.v, t1)
-        t_total = t1 + x2 / v_relative
-        t2 = t_total - t1
-        t_rem = t_total - self.data['t0']
-        n_total = int(t_rem / self.tank.t_shot) + 1
-        n2 = n_total - n1
+        nseq, t_spam = [int((t - self.t0) / self.tank.t_shot) + 1], [t]
+        for i in range(num - 1):
+            x = hlp.get_dist(self.x0, -self.v, time)
+            time += x / v_relative
+            t_spam.append(time)
 
-        t_spam = [t1, t_total]
-        t_tank, events = self.__get_sequence_guided([n1, n2])
-        print(t_tank, t_spam, events)
+            t = time - t
+            t_rem = time - self.t0
+            n_total = int(t_rem / self.tank.t_shot) + 1
+            nseq.append(n_total - sum(nseq))
+        t_tank, events = self.__get_sequence_guided(nseq)
+
+        print(f"\nTank t: {t_tank}\nSPAM t: {t_spam}\nTank's shots: {nseq}\nEvents: {events}")
 
         self.tank.starting_update(hlp.get_dist(self.x0, -self.v, self.t0), self.spam.a, self.spam.b, 1)
         i, j = 1, 0
@@ -130,25 +134,16 @@ class Scene:
                 self.tank.update(hlp.get_dist(self.x0, -self.v, t_tank[i]), self.spam.a, self.spam.b, self.__get_coeff())
                 i += 1
 
-        print("\nEvents:", events)
-        print(f"\n - tank shot time = {self.tank.t_shot} [s]")
-        print(f" - relative speed = {v_relative} [m/s]")
-        print(f" - x1 = {x1} [m]")
-        print(f" - t1 = {t1} [s]")
-        print(f" - n1 = {n1}")
-        print(f"\n - x2 = {x2} [m]")
-        print(f" - t_total = {t_total} [s]")
-        print(f" - t2 = {t2} [s]")
-        print(f" - n2 = {n2}")
-        print(f" - n_total = {n_total}\n")
+            if round(self.tank.V[-1] + self.spam.W[-1], acc) >= 1:
+                break
 
-        return max(t_tank[-1], t_spam[-1]), hlp.get_dist(self.x0, -self.v, max(t_tank[-1], t_spam[-1]))      # xf, tf
+        return t_spam, t_tank, events
 
-    def __get_sequence_guided(self, n: list) -> tuple:
+    def __get_sequence_guided(self, tank_shots: list) -> tuple:
         t, time = self.t0, []
         events = []
-        for val in n:
-            for i in range(val):
+        for shots in tank_shots:
+            for i in range(shots):
                 events.append('tank')
                 time.append(t)
                 t += self.tank.t_shot
